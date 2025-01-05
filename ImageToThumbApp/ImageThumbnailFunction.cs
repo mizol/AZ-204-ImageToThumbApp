@@ -1,110 +1,127 @@
-using Azure.Identity;
+using Azure.Messaging.EventGrid;
 using Azure.Storage.Blobs;
-using ImageToThumbApp;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 
-public class ImageThumbnailFunction
+namespace ImageToThumbApp
 {
-    private readonly ILogger _logger;
-    private readonly BlobServiceClient _blobServiceClient;
-
-    public ImageThumbnailFunction(ILoggerFactory loggerFactory, BlobServiceClient blobServiceClient)
+    public class ImageThumbnailFunction
     {
-        _logger = loggerFactory.CreateLogger<ImageThumbnailFunction>();
-        _blobServiceClient = blobServiceClient;
-    }
+        private const string EventTypeBlobCreated = "Microsoft.Storage.BlobCreated";
+        private readonly ILogger _logger;
+        private readonly BlobServiceClient _blobServiceClient;
+        private readonly string _originalsFolder;
+        private readonly string _thumbnailsFolder;
 
-    [Function("ImageThumbnailFunction")]
-    public async Task RunAsync(
-        [EventGridTrigger] Azure.Messaging.EventGrid.EventGridEvent eventGridEvent)
-    {
-        _logger.LogInformation("Received Event Grid event subject: {Subject}", eventGridEvent.Subject);
-
-        try
+        public ImageThumbnailFunction(ILoggerFactory loggerFactory, BlobServiceClient blobServiceClient, IConfiguration configuration)
         {
-            switch (eventGridEvent.EventType)
+            _logger = loggerFactory.CreateLogger<ImageThumbnailFunction>();
+            _blobServiceClient = blobServiceClient;
+            _originalsFolder = configuration["BlobFolders:Originals"]!;
+            _thumbnailsFolder = configuration["BlobFolders:Thumbnails"]!;
+        }
+
+        [Function("ImageThumbnailFunction")]
+        public async Task RunAsync(
+            [EventGridTrigger] EventGridEvent eventGridEvent)
+        {
+            _logger.LogInformation("Received Event Grid event subject: {Subject}", eventGridEvent.Subject);
+
+            try
             {
-                case "Microsoft.Storage.BlobCreated":
-                    var blobCreatedData = eventGridEvent.Data.ToObjectFromJson<BlobCreatedEventData>();
-
-                    await HandleBlobFile(blobCreatedData);
-                    break;
-
-                default:
+                if (eventGridEvent.EventType != EventTypeBlobCreated)
+                {
                     _logger.LogWarning("Unhandled event type: {EventType}", eventGridEvent.EventType);
-                    break;
+                    return;
+                }
+
+                var blobCreatedData = eventGridEvent.Data.ToObjectFromJson<BlobCreatedEventData>();
+                if (blobCreatedData is null)
+                {
+                    _logger.LogWarning("Can't parse bynary data to {0}", nameof(BlobCreatedEventData));
+                    return;
+                }
+
+                await HandleBlobFile(blobCreatedData);
+
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "An error occurred while processing the image: {ErrorMessage}", ex.Message);
             }
         }
-        catch (Exception ex)
+
+        private async Task HandleBlobFile(BlobCreatedEventData blobCreatedEventData)
         {
-            _logger?.LogError(ex, "An error occurred while processing the image: {ErrorMessage}", ex.Message);
-        }
-    }
+            string? blobUrl = blobCreatedEventData.Url;
+            if (string.IsNullOrEmpty(blobUrl))
+            {
+                _logger.LogWarning("Blob URL is null");
+                return;
+            }
 
-    private async Task HandleBlobFile(BlobCreatedEventData blobCreatedEventData)
-    {
-        if (blobCreatedEventData is null)
+            _logger.LogInformation("Blob created URL: {BlobUrl}", blobUrl);
+
+            // Download image
+            var sourceBlobClient = GetBlobClient(blobUrl, _originalsFolder);
+            using var sourceStream = await DownloadBlobAsync(sourceBlobClient);
+
+            // Process image
+            using var thumbnailStream = await MutateImageToPngThumbAsync(sourceStream);
+
+            // Upload thumbnail
+            var thumbnailBlobUrl = ReplaceExtension(blobUrl.Replace(_originalsFolder, _thumbnailsFolder), ".png");
+            var destinationBlobClient = GetBlobClient(thumbnailBlobUrl, _thumbnailsFolder);
+
+            await UploadBlobAsync(destinationBlobClient, thumbnailStream);
+
+            _logger.LogInformation("Thumbnail created and uploaded successfully.");
+        }
+
+        private string ReplaceExtension(string fileName, string newExtension)
         {
-            _logger.LogWarning("Blob data is null");
-            return;
+            var lastDotIndex = fileName.LastIndexOf('.');
+            return lastDotIndex > 0 
+                ? fileName.Substring(0, lastDotIndex) + newExtension 
+                : fileName + newExtension;
         }
 
-        string? blobUrl = blobCreatedEventData?.Url;
-        if (string.IsNullOrEmpty(blobUrl))
+        private BlobClient GetBlobClient(string blobUrl, string containerFolder)
         {
-            _logger.LogWarning("Blob URL is null");
-            return;
+            var uri = new Uri(blobUrl);
+            return _blobServiceClient.GetBlobContainerClient(containerFolder)
+                                      .GetBlobClient(uri.Segments[^1]);
         }
 
-        _logger.LogInformation("Blob URL: {BlobUrl}", blobUrl);
+        private async Task<MemoryStream> DownloadBlobAsync(BlobClient blobClient)
+        {
+            var stream = new MemoryStream();
+            await blobClient.DownloadToAsync(stream);
+            stream.Position = 0;
+            return stream;
+        }
 
-        var sourceBlobClient = GetBlobClient(blobUrl);
-        using var sourceStream = await DownloadBlobAsync(sourceBlobClient);
-        using var thumbnailStream = await ProcessImageAsync(sourceStream);
+        private async Task<MemoryStream> MutateImageToPngThumbAsync(MemoryStream sourceStream)
+        {
+            using var image = await Image.LoadAsync(sourceStream);
 
-        var thumbnailBlobUrl = blobUrl.Replace("originals", "thumbnails");
-        var destinationBlobClient = GetBlobClient(thumbnailBlobUrl);
+            int width = image.Width / 2;
+            int height = image.Height / 2;
+            image.Mutate(x => x.Resize(width, height, KnownResamplers.Lanczos3));
 
-        await UploadBlobAsync(destinationBlobClient, thumbnailStream);
+            var thumbnailStream = new MemoryStream();
+            await image.SaveAsPngAsync(thumbnailStream);
+            thumbnailStream.Position = 0;
 
-        _logger.LogInformation("Thumbnail created and uploaded successfully.");
-    }
+            return thumbnailStream;
+        }
 
-    private BlobClient GetBlobClient(string blobUrl)
-    {
-        var uri = new Uri(blobUrl);
-        return _blobServiceClient.GetBlobContainerClient(uri.Segments[1].TrimEnd('/'))
-                                  .GetBlobClient(uri.Segments[^1]);
-    }
-
-    private async Task<MemoryStream> DownloadBlobAsync(BlobClient blobClient)
-    {
-        var stream = new MemoryStream();
-        await blobClient.DownloadToAsync(stream);
-        stream.Position = 0;
-        return stream;
-    }
-
-    private async Task<MemoryStream> ProcessImageAsync(MemoryStream sourceStream)
-    {
-        using var image = Image.Load(sourceStream);
-
-        int width = image.Width / 2;
-        int height = image.Height / 2;
-        image.Mutate(x => x.Resize(width, height, KnownResamplers.Lanczos3));
-
-        var thumbnailStream = new MemoryStream();
-        await image.SaveAsPngAsync(thumbnailStream);
-        thumbnailStream.Position = 0;
-
-        return thumbnailStream;
-    }
-
-    private async Task UploadBlobAsync(BlobClient blobClient, MemoryStream thumbnailStream)
-    {
-        await blobClient.UploadAsync(thumbnailStream, overwrite: true);
+        private async Task UploadBlobAsync(BlobClient blobClient, MemoryStream thumbnailStream)
+        {
+            await blobClient.UploadAsync(thumbnailStream, overwrite: true);
+        }
     }
 }
