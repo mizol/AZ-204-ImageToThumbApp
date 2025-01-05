@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "ImageToThumbApp": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7028 --verbose",
+      "launchBrowser": false
+    }
+  }
+}
