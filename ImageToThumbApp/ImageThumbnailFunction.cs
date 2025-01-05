@@ -1,5 +1,4 @@
 using Azure.Identity;
-using Azure.Messaging.EventGrid;
 using Azure.Storage.Blobs;
 using ImageToThumbApp;
 using Microsoft.Azure.Functions.Worker;
@@ -31,11 +30,9 @@ public class ImageThumbnailFunction
                 case "Microsoft.Storage.BlobCreated":
                     var blobCreatedData = eventGridEvent.Data.ToObjectFromJson<BlobCreatedEventData>();
 
-                    // Handle blob created event
                     await HandleBlobFile(blobCreatedData);
                     break;
 
-                // Handle other event types...
                 default:
                     _logger.LogWarning("Unhandled event type: {EventType}", eventGridEvent.EventType);
                     break;
@@ -64,36 +61,50 @@ public class ImageThumbnailFunction
 
         _logger.LogInformation("Blob URL: {BlobUrl}", blobUrl);
 
-        // https://store4azurefunclearn.blob.core.windows.net/originals/2024_05_10_MothersDay.jpg
+        var sourceBlobClient = GetBlobClient(blobUrl);
+        using var sourceStream = await DownloadBlobAsync(sourceBlobClient);
+        using var thumbnailStream = await ProcessImageAsync(sourceStream);
 
-        //var blobName = Path.GetFileName(blobUrl);
-        //BlobClient blobClient = _blobServiceClient.GetBlobContainerClient("originals").GetBlobClient(blobName);
+        var thumbnailBlobUrl = blobUrl.Replace("originals", "thumbnails");
+        var destinationBlobClient = GetBlobClient(thumbnailBlobUrl);
 
-        var sourceBlobClient = new BlobClient(new Uri(blobUrl), new DefaultAzureCredential());
+        await UploadBlobAsync(destinationBlobClient, thumbnailStream);
 
-        using var sourceStream = new MemoryStream();
-        await sourceBlobClient.DownloadToAsync(sourceStream);
-        sourceStream.Position = 0;
+        _logger.LogInformation("Thumbnail created and uploaded successfully.");
+    }
 
+    private BlobClient GetBlobClient(string blobUrl)
+    {
+        var uri = new Uri(blobUrl);
+        return _blobServiceClient.GetBlobContainerClient(uri.Segments[1].TrimEnd('/'))
+                                  .GetBlobClient(uri.Segments[^1]);
+    }
+
+    private async Task<MemoryStream> DownloadBlobAsync(BlobClient blobClient)
+    {
+        var stream = new MemoryStream();
+        await blobClient.DownloadToAsync(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private async Task<MemoryStream> ProcessImageAsync(MemoryStream sourceStream)
+    {
         using var image = Image.Load(sourceStream);
 
         int width = image.Width / 2;
         int height = image.Height / 2;
         image.Mutate(x => x.Resize(width, height, KnownResamplers.Lanczos3));
 
-        // Prepare the destination blob client
-        //var thumbnailBlobName = string.Concat(Path.GetFileNameWithoutExtension(blobUrl), ".png");
-        
-        var thumbnailBlobUrl = blobUrl.Replace("originals", "thumbnails");
-        var destinationBlobClient = new BlobClient(new Uri(thumbnailBlobUrl), new DefaultAzureCredential());
-
-        using var thumbnailStream = new MemoryStream();
+        var thumbnailStream = new MemoryStream();
         await image.SaveAsPngAsync(thumbnailStream);
         thumbnailStream.Position = 0;
 
-        // Upload the thumbnail to the destination container
-        await destinationBlobClient.UploadAsync(thumbnailStream, overwrite: true);
+        return thumbnailStream;
+    }
 
-        _logger.LogInformation("Thumbnail created and uploaded successfully.");
+    private async Task UploadBlobAsync(BlobClient blobClient, MemoryStream thumbnailStream)
+    {
+        await blobClient.UploadAsync(thumbnailStream, overwrite: true);
     }
 }
