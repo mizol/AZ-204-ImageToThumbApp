@@ -1,17 +1,13 @@
-using Azure.Identity;
-using Azure.Storage.Blobs;
+using ImageToThumbApp.Features.BlobHandling.Extentions;
 using Microsoft.Azure.Functions.Worker.Builder;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.ConfigureFunctionsWebApplication();
 
-builder.Services.AddSingleton<BlobServiceClient>(_ =>
-    new BlobServiceClient(
-        new Uri("https://store4azurefunclearn.blob.core.windows.net"),
-        new DefaultAzureCredential()));
+builder.Services.AddBlobServiceClient(builder.Configuration);
+builder.Services.AddImageThumbnailService(builder.Configuration);
 
 // Application Insights isn't enabled by default. See https://aka.ms/AAt8mw4.
 // builder.Services

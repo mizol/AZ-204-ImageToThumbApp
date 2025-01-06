@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Text.Json.Serialization;
 
-namespace ImageToThumbApp
+namespace ImageToThumbApp.Features.BlobHandling.Events
 {
     // public class BlobCreatedEventData
     // {

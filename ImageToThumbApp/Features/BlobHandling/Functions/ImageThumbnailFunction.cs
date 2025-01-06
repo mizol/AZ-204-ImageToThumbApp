@@ -1,25 +1,32 @@
 using Azure.Messaging.EventGrid;
 using Azure.Storage.Blobs;
+using ImageToThumbApp.Features.BlobHandling.Events;
+using ImageToThumbApp.Features.BlobHandling.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
-namespace ImageToThumbApp
+namespace ImageToThumbApp.Features.BlobHandling.Functions
 {
     public class ImageThumbnailFunction
     {
         private const string EventTypeBlobCreated = "Microsoft.Storage.BlobCreated";
+
         private readonly ILogger _logger;
         private readonly BlobServiceClient _blobServiceClient;
+        private readonly IGenerateThumbnail _imageProcessingService;
+
         private readonly string _originalsFolder;
         private readonly string _thumbnailsFolder;
 
-        public ImageThumbnailFunction(ILoggerFactory loggerFactory, BlobServiceClient blobServiceClient, IConfiguration configuration)
+        public ImageThumbnailFunction(ILoggerFactory loggerFactory,
+            BlobServiceClient blobServiceClient,
+            IGenerateThumbnail imageProcessingService,
+            IConfiguration configuration)
         {
             _logger = loggerFactory.CreateLogger<ImageThumbnailFunction>();
             _blobServiceClient = blobServiceClient;
+            _imageProcessingService = imageProcessingService;
             _originalsFolder = configuration["BlobFolders:Originals"]!;
             _thumbnailsFolder = configuration["BlobFolders:Thumbnails"]!;
         }
@@ -69,8 +76,8 @@ namespace ImageToThumbApp
             var sourceBlobClient = GetBlobClient(blobUrl, _originalsFolder);
             using var sourceStream = await DownloadBlobAsync(sourceBlobClient);
 
-            // Process image
-            using var thumbnailStream = await MutateImageToPngThumbAsync(sourceStream);
+            // Convert to thumbnail
+            using var thumbnailStream = await _imageProcessingService.GenerateThumbnailAsync(sourceStream);
 
             // Upload thumbnail
             var thumbnailBlobUrl = ReplaceExtension(blobUrl.Replace(_originalsFolder, _thumbnailsFolder), ".png");
@@ -84,8 +91,8 @@ namespace ImageToThumbApp
         private string ReplaceExtension(string fileName, string newExtension)
         {
             var lastDotIndex = fileName.LastIndexOf('.');
-            return lastDotIndex > 0 
-                ? fileName.Substring(0, lastDotIndex) + newExtension 
+            return lastDotIndex > 0
+                ? fileName.Substring(0, lastDotIndex) + newExtension
                 : fileName + newExtension;
         }
 
@@ -102,21 +109,6 @@ namespace ImageToThumbApp
             await blobClient.DownloadToAsync(stream);
             stream.Position = 0;
             return stream;
-        }
-
-        private async Task<MemoryStream> MutateImageToPngThumbAsync(MemoryStream sourceStream)
-        {
-            using var image = await Image.LoadAsync(sourceStream);
-
-            int width = image.Width / 2;
-            int height = image.Height / 2;
-            image.Mutate(x => x.Resize(width, height, KnownResamplers.Lanczos3));
-
-            var thumbnailStream = new MemoryStream();
-            await image.SaveAsPngAsync(thumbnailStream);
-            thumbnailStream.Position = 0;
-
-            return thumbnailStream;
         }
 
         private async Task UploadBlobAsync(BlobClient blobClient, MemoryStream thumbnailStream)
