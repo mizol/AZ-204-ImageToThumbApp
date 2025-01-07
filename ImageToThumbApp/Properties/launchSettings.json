@@ -3,6 +3,7 @@
     "ImageToThumbApp": {
       "commandName": "Project",
       "commandLineArgs": "--port 7028 --verbose",
+      //"workingDirectory": "./Config",
       "launchBrowser": false
     }
   }

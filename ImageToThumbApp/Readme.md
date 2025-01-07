@@ -1,15 +1,49 @@
-﻿# ImageToThumbApp
+﻿# ImageToThumbApp - Az-204 Self-Lab
 
 ## Project Goal
 
-The goal of this project is to learn and implement Azure Functions using the EventGrid trigger to process blob events in an Azure Storage Account. Specifically, the project demonstrates how to create thumbnail images from uploaded blobs, showcasing cloud-based event-driven architecture and scalability.
+The goal of this project is to learn and implement Azure Functions using the **EventGrid trigger** to process blob events in an Azure Storage Account. Specifically, the project demonstrates how to create thumbnail images from uploaded blobs, showcasing cloud-based event-driven architecture and scalability.
 
 The main objective is to:
+- Explore the Blob trigger options for Azure Functions and their pros and cons.
 - Understand the integration of Azure Event Grid for event-driven solutions.
 - Process image files uploaded to Azure Blob Storage.
 - Generate thumbnails for the images and save them back to Blob Storage.
 
 This project emphasizes learning best practices for scalable and maintainable Azure Functions. 
+
+## Azure Function Blob Trigger Options
+
+Azure Functions offers multiple ways to execute code based on changes to blobs in a storage container. The three primary options are:
+
+1. **Polling-based Blob Trigger**
+    - Monitors blobs periodically, with latency of up to 10 minutes.
+    - Supports processing existing blobs.
+    - Compatible with most Blob storage account types, except blob-only accounts.
+    - Tutorial [Azure blob storage trigger](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-storage-blob-trigger)
+1. **Event-based Blob Trigger ()**
+    - Reacts to blob changes in near **_real-time with low latency_**.
+    - Does not process existing blobs.
+    - Recommended for use due to its efficiency and compatibility with the Flex Consumption plan.
+    - Requires **Storage Extension v5.x+** and supports general-purpose v2 storage accounts.
+    - Tutorial [Trigger Azure Function](https://learn.microsoft.com/en-us/azure/azure-functions/functions-event-grid-blob-trigger?pivots=programming-language-csharp) 
+2. **Event Grid**
+    - Uses Azure Event Grid to push events in **_near real-time_** when a blob is created or updated.
+    - Ideal for building event-driven, scalable architectures.
+    - Supports event filtering for precise targeting.
+    - Requires general-purpose v2 storage accounts or premium accounts.
+
+### Comparison of Trigger Options
+
+| Strategy                | Latency             | Account Limitations              | Processes Existing Blobs | Filters            |
+| ----------------------- | ------------------- | -------------------------------- | ------------------------ | ------------------ |
+| Polling-based Trigger   | High (up to 10 min) | Blob-only accounts not supported | Yes                      | Blob name patterns |
+| ==Event-based Trigger== | ==Low==             | General-purpose v1 not supported | No                       | Event filters      |
+| Queue Trigger           | Medium              | None                             | No                       | N/A                |
+| ==Event Grid==          | ==Low==             | General-purpose v1 not supported | No                       | Event filters      |
+
+For most scenarios, the **event-based blob trigger** is recommended due to its low latency and modern event-driven architecture.
+[Trigger on a blob container](https://learn.microsoft.com/en-us/azure/azure-functions/storage-considerations?tabs=azure-cli#working-with-blobs)
 
 ---
 
@@ -21,9 +55,6 @@ The project follows a structure adhering to the **Vertical Slice Architecture (V
 ImageToThumbApp
 ├── 📁 Properties
 │   └── 📄 launchSettings.json
-├── 📁 Config
-│   ├── 📄 host.json
-│   └── 📄 local.settings.json
 ├── 📁 Features
 │   └── 📁 BlobHandling
 │       ├── 📁 Events
@@ -40,6 +71,8 @@ ImageToThumbApp
 ├── 📁 Startup
 │   └── 📄 Program.cs    // Entry point and service configuration
 ├── 📄 .gitignore
+├── 📄 host.json
+├── 📄 local.settings.json
 └── 📄 Readme.md
 ```
 
@@ -149,6 +182,21 @@ public class BlobCreatedEventData
        --endpoint https://{myfunctionapp}.azurewebsites.net/runtime/webhooks/EventGrid?functionName=ImageThumbnailFunction
    ```
 
+#### Enable Event Grid on Azure Subscription:
+
+To enable Event Grid on your Azure subscription using Azure CLI, follow these steps:
+
+1. **Register the Event Grid resource provider:**
+    ```
+    az provider register --namespace Microsoft.EventGrid
+    ```
+
+2. **Verify the registration status:**
+    ```
+    az provider show --namespace Microsoft.EventGrid --query "registrationState"
+    ```
+Ensure the output shows **Registered**.
+
 ### 5. Run and Test the Application
 
 - Upload an image to the blob storage's `originals` container.
@@ -184,6 +232,8 @@ public class BlobCreatedEventData
 ]
 ```
 
+[Blob Created Schema](https://learn.microsoft.com/en-us/azure/event-grid/event-schema-blob-storage?tabs=cloud-event-schema)
+
 - Refer to the `Resources/EventGrid_BlobCreated.png` file for an example of an Insomnia configuration.
 
 ### Step 6: Debug and Monitor
@@ -206,10 +256,20 @@ public class BlobCreatedEventData
 ---
 
 ## Helpful Resources
+
 - [Azure Functions Documentation](https://learn.microsoft.com/en-us/azure/azure-functions/)
 - [Azure Event Grid Documentation](https://learn.microsoft.com/en-us/azure/event-grid/)
-- [Quickstart: Create an Event Grid trigger for Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid-trigger?tabs=dotnet)
-- [Quickstart: Blob Storage and Event Grid](https://learn.microsoft.com/en-us/azure/event-grid/event-grid-event-handlers#blob-storage)
+
+- [Blob Doc - Azure Blob storage trigger for Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-storage-blob-trigger)
+- [Blob Doc - Reacting to Blob storage events](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-event-overview)
+
+- [AF Doc - Quickstart: Create an Event Grid trigger for Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid-trigger?tabs=dotnet)
+- [AF Doc - Storage considerations for Azure Functions (AF)](https://learn.microsoft.com/en-us/azure/azure-functions/storage-considerations?tabs=azure-cli#working-with-blobs)
+- [AF Doc - Azure Blob storage input binding for Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-storage-blob-input)
+
+- [EventGrid Doc - Quickstart: Use Azure Event Grid to route Blob storage events](https://learn.microsoft.com/en-us/azure/event-grid/blob-event-quickstart-portal?tabs=dotnet)
+- [EventGrid Doc - Azure Blob Storage as an Event Grid source (Schema)](https://learn.microsoft.com/en-us/azure/event-grid/event-schema-blob-storage)
+
 
 ---
 
